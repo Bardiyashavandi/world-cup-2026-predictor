@@ -1,0 +1,16 @@
+cat > requirements.txt << 'EOF'
+pandas
+numpy
+scipy
+scikit-learn
+xgboost
+lightgbm
+torch
+streamlit
+plotly
+matplotlib
+seaborn
+requests
+jupytext
+nbformat
+EOF
