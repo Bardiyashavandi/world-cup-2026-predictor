@@ -7,11 +7,14 @@ venv/
 .venv/
 
 # Data — raw Kaggle sources and regenerated artifacts are not committed.
-# (data/predictions/ IS tracked.)
+# (data/predictions/ IS tracked, and the small WC 2026 fixture files are
+#  kept because they're authored from the official draw, not downloaded.)
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/raw/wc_2026_fixtures.csv
+!data/raw/wc_2026_results.csv
 
 # Jupyter
 .ipynb_checkpoints/
