@@ -1,127 +1,357 @@
 # ⚽ FIFA World Cup 2026 — Group Stage Predictor
 
-> A multi-model machine learning system for predicting the 2026 FIFA World Cup group stage. Combines statistical models, gradient boosting, and neural networks into a weighted ensemble with live Bayesian updating after each matchday.
+> A production-grade multi-model machine learning system for predicting the 2026 FIFA World Cup group stage. Combines classical statistical models, gradient boosting, and neural networks into a weighted ensemble with live Bayesian updating after each matchday.
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![Models](https://img.shields.io/badge/Models-9-green)
 ![Accuracy](https://img.shields.io/badge/Backtest%20Accuracy-50.5%25-orange)
 ![Dashboard](https://img.shields.io/badge/Dashboard-Streamlit-red)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
 ---
 
-## 🎯 Project Overview
+## 🎯 What This Project Does
 
-This project predicts scorelines and win/draw/loss probabilities for all 72 group stage matches of the 2026 FIFA World Cup. What makes it distinctive:
+This system predicts **scorelines and outcome probabilities** for all 72 group stage matches of the 2026 FIFA World Cup (USA/Canada/Mexico, June 11 – June 27).
 
-- **Multi-model ensemble** — 9 models from different paradigms combined with learned weights
-- **Iterative updating** — predictions improve after each matchday using real results
-- **Stakes-aware** — a specialist model activates for MD2/MD3 capturing squad rotation and must-win scenarios
-- **Bayesian updating** — team strength estimates update after each match
-- **Backtested** — validated on WC 2018 and 2022 before making 2026 predictions
+For each match it outputs:
+- **Predicted scoreline** (e.g. Spain 2-0 Cape Verde)
+- **Expected goals** for each team (e.g. xG: 2.21 vs 0.56)
+- **Win/Draw/Loss probabilities** (e.g. H:74% D:17% A:8%)
+- **Confidence score** based on how many models agree
+
+The system is **iterative** — after each matchday it ingests real results, updates all features and standings, and produces improved predictions for remaining matches. A specialist stakes model activates from MD2 onwards when group context becomes available.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
     Raw Data (6 sources)
            ↓
+    Data Processing + Team Name Normalization
+           ↓
     Feature Engineering (24 features per match)
            ↓
-    ┌─────────────────────────────────────────┐
-    │           9 Prediction Models           │
-    │                                         │
-    │  Statistical:    ML:        Specialist: │
-    │  ├ Static ELO   ├ XGBoost  └ Stakes    │
-    │  ├ Dixon-Coles  ├ LightGBM             │
-    │  ├ Hist. Avg    ├ Neural Net           │
-    │  └ Dynamic ELO  └ Logistic Reg         │
-    └─────────────────────────────────────────┘
+    ┌──────────────────────────────────────────────┐
+    │              9 Prediction Models             │
+    │                                              │
+    │  Statistical:       ML:          Specialist: │
+    │  ├─ Static ELO      ├─ XGBoost   └─ Stakes  │
+    │  ├─ Dixon-Coles     ├─ LightGBM             │
+    │  ├─ Hist. Average   ├─ Neural Net           │
+    │  └─ Dynamic ELO     └─ Logistic Reg         │
+    └──────────────────────────────────────────────┘
            ↓
     Weighted Ensemble (matchday-aware weights)
            ↓
     Final Predictions + Confidence Scores
            ↓
-    Streamlit Dashboard
+    Streamlit Dashboard + CSV Outputs
 
 ---
 
-## 📊 Models
+## 📊 Model Details
 
-### Statistical Models
+### Why 9 Models?
 
-| Model | Description |
-|-------|-------------|
-| **Static ELO** | ELO ratings converted to Poisson xG then scoreline probabilities |
-| **Dixon-Coles** | Attack/defense parameters fitted via MLE with time decay and low-score correction |
-| **Historical Average** | Recent form-based xG using last N matches |
-| **Dynamic ELO** | Live ELO recomputed by replaying all historical matches with variable K-factors |
-
-### ML Models
-
-| Model | Description |
-|-------|-------------|
-| **XGBoost** | Gradient boosting on 24 features with Poisson loss and exponential time decay weights |
-| **LightGBM** | Leaf-wise gradient boosting, faster alternative to XGBoost |
-| **Neural Network** | 3-layer FootballNet (24→128→64→32→2) with BatchNorm, Dropout and early stopping |
-| **Logistic Regression** | W/D/L classifier providing calibrated outcome probabilities |
-
-### Specialist Model
-
-| Model | Description |
-|-------|-------------|
-| **Stakes Model** | XGBoost trained only on MD2/MD3 historical WC matches with 18 additional group context features including must_win, already_qualified and elimination_risk |
+Each model captures a different signal. No single model dominates across all match types — strong teams vs weak teams, MD1 vs MD3, attack-heavy vs defensive setups all require different information. The ensemble combines their strengths.
 
 ---
 
-## 🔧 Features
+### 1. Static ELO Model
 
-24 features engineered per match:
+ELO is a rating system originally designed for chess, adapted here for international football. Every team has a single number representing their strength. When teams play, points transfer based on the result and the probability of that result.
 
-| Category | Features |
-|----------|----------|
-| **ELO** | home_elo, away_elo, elo_diff |
-| **Form last 5** | points, avg_scored, avg_conceded × 2 teams |
-| **Form last 10** | points, avg_scored, avg_conceded × 2 teams |
-| **Differentials** | form5_diff, form10_diff, avg_scored_diff |
-| **Head-to-Head** | matches, home_wins, away_wins, draws, avg_goals |
-| **Context** | is_neutral |
+The model converts the ELO difference between two teams into expected goals using a linear scaling, then applies a Poisson distribution to generate full scoreline probabilities.
 
-Stakes features added for MD2/MD3: points, position, can_qualify, already_qualified, must_win, elimination_risk, points_needed × 2 teams + matchday
+    home_xg = 1.35 + (elo_diff × 0.001)
+    away_xg = 1.35 - (elo_diff × 0.001)
+
+**Strength:** Simple, stable, well-validated in football analytics.
+**Weakness:** Ignores recent form, attack/defense split.
+**Best for:** Long-term strength signal, stable teams.
 
 ---
 
-## 📈 Performance
+### 2. Dixon-Coles Poisson Model
 
-Backtested on WC 2018 and 2022 group stage matches:
+Published in a 1997 statistics paper by Dixon and Coles, this is the academic gold standard for football score prediction. Instead of one number per team, it estimates two parameters:
 
-| Model | Result Accuracy | Exact Score | Brier Score |
-|-------|----------------|-------------|-------------|
-| XGBoost | **50.5%** | 12.9% | **0.190** |
-| Historical Avg | 32.0% | 5.5% | 0.211 |
-| Random baseline | 33.3% | — | — |
-| Betting markets | ~55% | — | — |
+- **Attack strength (α)** — how many goals a team tends to score
+- **Defense weakness (β)** — how many goals a team tends to concede
 
-XGBoost achieves 50.5% result accuracy — within 5% of professional betting markets.
+Expected goals are computed as:
+
+    home_xg = α_home × β_away × home_advantage
+    away_xg = α_away × β_home
+
+Parameters are estimated via maximum likelihood — finding values that best explain 19,000+ historical scorelines. Two key enhancements:
+
+**Time weighting:** Recent matches matter more. Each match is weighted by exp(-0.003 × days_ago), so a match from 3 years ago has about 1/3 the influence of a recent match.
+
+**Dixon-Coles correction:** Standard Poisson underestimates low-scoring results. The model applies a correction factor ρ to 0-0, 1-0, 0-1, and 1-1 scorelines to better reflect their actual frequency.
+
+**Strength:** Theoretically grounded, captures attack/defense separately, peer-reviewed.
+**Weakness:** Computationally expensive, needs sufficient data per team.
+**Best for:** Well-documented teams with many historical matches.
+
+---
+
+### 3. Historical Average Model
+
+The simplest model — predicts based on each team's recent scoring and conceding averages:
+
+    home_xg = (home_avg_scored + away_avg_conceded) / 2
+    away_xg = (away_avg_scored + home_avg_conceded) / 2
+
+This acts as a strong baseline. If our complex models cannot beat it, something is wrong with the pipeline.
+
+**Strength:** Extremely fast, reacts quickly to recent form changes.
+**Weakness:** Ignores opponent quality entirely.
+**Best for:** Teams that have drastically changed style or manager recently.
+
+---
+
+### 4. Dynamic ELO Model
+
+Unlike the Static ELO which uses a single snapshot, Dynamic ELO replays all 19,713 historical matches chronologically and updates ratings after every single match. This means the ratings always reflect current form.
+
+K-factors vary by tournament importance:
+
+    World Cup match:     K = 60  (most impact)
+    Continental trophy:  K = 50
+    Qualifier:           K = 40
+    Friendly:            K = 20  (least impact)
+
+Goal difference also multiplies the K-factor — bigger wins cause larger rating changes.
+
+**Strength:** Always up-to-date, naturally time-weighted by design.
+**Weakness:** Still only one number per team, no attack/defense split.
+**Best for:** Capturing momentum and recent tournament form.
+
+---
+
+### 5. XGBoost (Time-Weighted)
+
+XGBoost learns complex non-linear relationships between the 24 engineered features and goals scored. It builds 300 decision trees sequentially, each correcting the errors of the previous.
+
+Key design choices:
+- **Poisson loss function** — correct for count data (goals can't be negative)
+- **Exponential sample weights** — recent matches weighted up to 5.8× more than oldest
+- **TimeSeriesSplit CV** — always trains on past, validates on future (no data leakage)
+- **Separate models** — one model for home goals, one for away goals
+
+The most important features learned by XGBoost:
+1. form10_points_diff — recent form differential
+2. away_form10_avg_conceded — opponent defensive weakness
+3. elo_diff — overall strength gap
+4. h2h_home_wins — historical head-to-head record
+
+**Strength:** Best raw accuracy, captures complex feature interactions, fast.
+**Weakness:** Black box — hard to explain individual predictions.
+**Best for:** Overall prediction accuracy.
+
+---
+
+### 6. LightGBM (Time-Weighted)
+
+Microsoft's implementation of gradient boosting. Uses leaf-wise tree growth instead of level-wise (XGBoost), making it faster and often slightly more accurate on tabular data. Identical feature set and time-weighting to XGBoost.
+
+Performance is near-identical to XGBoost (MAE difference < 0.01), providing useful prediction diversity in the ensemble.
+
+**Strength:** Faster training, handles large datasets well.
+**Weakness:** Can overfit on small datasets without careful tuning.
+**Best for:** Adding diversity to ensemble without sacrificing accuracy.
+
+---
+
+### 7. Neural Network (FootballNet)
+
+A feedforward neural network trained end-to-end on the 24 features:
+
+    Input (24) → Dense(128) + BatchNorm + ReLU + Dropout(0.3)
+              → Dense(64)  + BatchNorm + ReLU + Dropout(0.2)
+              → Dense(32)  + ReLU
+              → Output(2)  + Softplus
+
+The Softplus activation on the output layer ensures predicted xG values are always positive. BatchNorm stabilizes training and speeds convergence. Early stopping prevents overfitting — training stops when validation loss stops improving (stopped at epoch 29 in our case).
+
+Features are standardized with StandardScaler before training since neural networks are sensitive to feature scale. Time-decay sample weights are applied during training.
+
+**Strength:** Captures non-linear feature interactions that tree models might miss.
+**Weakness:** Needs careful regularization on small datasets.
+**Best for:** Complex interaction patterns between features.
+
+---
+
+### 8. Logistic Regression
+
+A statistical classifier that directly models outcome probabilities (Win/Draw/Loss) rather than scorelines. Unlike the other models, it does not predict xG — it predicts the result directly.
+
+    P(Home Win) = sigmoid(β₀ + β₁×elo_diff + β₂×form5 + ...)
+
+The model outputs calibrated probabilities, meaning if it says 70% home win, the home team should actually win about 70% of the time across many such predictions.
+
+Top features by coefficient:
+- elo_diff (+0.216) — most important positive signal
+- away_form5_avg_conceded (+0.139) — opponent recent defensive frailty
+- h2h_home_wins (+0.125) — historical head-to-head dominance
+
+**Strength:** Fully interpretable, well-calibrated probabilities.
+**Weakness:** Cannot predict scorelines, only W/D/L.
+**Best for:** Probability calibration signal in ensemble.
+
+---
+
+### 9. Stakes Model (Specialist)
+
+This is the most unique model in the system. It addresses a fundamental weakness of all general models: they ignore **group stage context**.
+
+Two real effects this model captures:
+
+**Rotation effect:** France with 6 points after MD2 is already qualified. Their MD3 lineup will include squad rotation — resting Mbappé, giving younger players minutes. Expected goals should be lower.
+
+**Must-win effect:** Panama with 0 points in MD3 needs to win. Their tactics will be more aggressive, high press, more shots. Expected goals should be higher.
+
+The model is trained exclusively on MD2 and MD3 historical World Cup matches (163 matches from 2006-2022) with 18 additional features:
+
+    home_points, home_position, home_matches_played
+    home_can_qualify, home_already_qualified
+    home_must_win, home_elimination_risk
+    home_points_needed (and equivalent for away team)
+    matchday
+
+The most important feature discovered: **away_points_needed** (top feature for away goals prediction) — teams that need points score significantly more than expected.
+
+**Strength:** Captures human behavioral effects that statistical models miss.
+**Weakness:** Only 163 training examples — activates MD2/MD3 only.
+**Best for:** MD3 matches with maximum group context.
+
+---
+
+## 🔧 Feature Engineering
+
+All 24 features are computed dynamically from historical results before the date of each match — no future data leakage.
+
+### ELO Features
+- **home_elo, away_elo** — absolute team strength from the Kaggle ELO dataset
+- **elo_diff** — strength difference (positive = home team stronger)
+
+### Form Features (computed rolling, before match date)
+- **form5/10_points** — points earned in last 5/10 matches (W=3, D=1, L=0)
+- **form5/10_avg_scored** — average goals scored per match
+- **form5/10_avg_conceded** — average goals conceded per match
+- **form5/10_points_diff** — home team form minus away team form
+- **avg_scored_diff** — home avg scored minus away avg scored
+
+### Head-to-Head Features
+- **h2h_matches** — number of previous meetings
+- **h2h_home_wins, h2h_away_wins, h2h_draws** — historical results
+- **h2h_avg_goals** — average total goals in previous meetings
+
+### Context
+- **is_neutral** — all WC matches are on neutral ground (=1)
+
+---
+
+## 🎯 Ensemble Design
+
+The ensemble combines all model predictions using weighted averaging of xG values and win probabilities. Weights are matchday-aware:
+
+    MD1 weights (no group context):
+    XGBoost:        22%  ← highest MAE performance
+    LightGBM:       22%  ← near-identical to XGBoost
+    Dixon-Coles:    12%  ← strong theoretical grounding
+    Dynamic ELO:    12%  ← captures live form
+    Neural Net:     12%  ← non-linear interactions
+    ELO:             8%  ← simple baseline
+    Hist. Average:   8%  ← recent form signal
+    Logistic Reg:    4%  ← calibration signal
+    Stakes Model:    0%  ← no context yet
+
+    MD3 weights (maximum context):
+    Stakes Model:   25%  ← activated with full context
+    XGBoost:        17%
+    LightGBM:       17%
+    Dixon-Coles:     9%
+    Dynamic ELO:     9%
+    Neural Net:      9%
+    ELO:             6%
+    Hist. Average:   6%
+    Logistic Reg:    2%
+
+Each prediction also includes a **confidence score** — the percentage of models that predicted the same outcome. 88%+ is HIGH, 50-70% is MEDIUM.
+
+---
+
+## 📈 Backtesting Results
+
+Validated on WC 2018 and WC 2022 group stage matches, training only on data before each tournament:
+
+    WC 2018 (64 matches):
+    XGBoost:          Result: 48.8%  Exact: 12.4%  Brier: 0.194
+    Historical Avg:   Result: 28.1%  Exact:  6.2%  Brier: 0.208
+
+    WC 2022 (64 matches):
+    XGBoost:          Result: 52.2%  Exact: 13.4%  Brier: 0.186
+    Historical Avg:   Result: 35.9%  Exact:  4.7%  Brier: 0.214
+
+    Combined Average:
+    XGBoost:          Result: 50.5%  Exact: 12.9%  Brier: 0.190
+    Random baseline:  Result: 33.3%
+    Betting markets:  Result: ~55%
+
+**Interpretation:**
+- Result accuracy of 50.5% means correctly predicting Home Win / Draw / Away Win in half of all matches
+- This is 17 percentage points above random guessing
+- Within 5% of professional betting market accuracy
+- Exact score accuracy of 12.9% means getting the precise scoreline right about 1 in 8 matches
+- Brier score of 0.190 indicates well-calibrated probabilities (closer to 0 = better)
 
 ---
 
 ## 🔄 Live Updating Pipeline
 
-After each matchday:
+The system is designed for live tournament use. After each matchday:
 
-    # 1. Fill in results
-    # Edit data/raw/wc_2026_results.csv
+    Step 1: Enter real results
+            Edit data/raw/wc_2026_results.csv
+            Set home_goals, away_goals, played=True
 
-    # 2. Run automated pipeline
-    python3 src/updater/update_predictions.py --matchday 1
+    Step 2: Run automated pipeline
+            python3 src/updater/update_predictions.py --matchday 1
 
-    # This automatically:
-    # Rebuilds features with new results
-    # Computes group standings
-    # Runs Bayesian strength updater
-    # Reruns all 9 models
-    # Regenerates ensemble for all remaining matchdays
-    # Activates stakes model with real group context
+    The pipeline automatically:
+    ├── Rebuilds features with new results
+    │   (form, H2H now includes actual WC matches)
+    ├── Computes group standings
+    ├── Runs Bayesian strength updater
+    │   (team attack/defense estimates updated from real goals)
+    ├── Reruns all 9 models with updated features
+    ├── Generates ensemble predictions for MD2 AND MD3
+    └── Stakes model now has real group context
+
+    Step 3: Refresh dashboard
+            Click Refresh in sidebar
+            MD2 and MD3 predictions now reflect real results
+
+---
+
+## 🧮 Bayesian Updating
+
+After real results come in, team strength estimates are updated using Bayes theorem:
+
+    posterior = (prior × prior_weight + observed × n_matches)
+                / (prior_weight + n_matches)
+
+    Example after France 2-0 Senegal:
+    Prior:    France attack = 1.94 (from 20 historical matches)
+    Observed: France scored 2.0 goals (1 WC match)
+    Prior weight: 10
+
+    Posterior = (1.94 × 10 + 2.0 × 1) / (10 + 1) = 1.945
+
+The prior is strong (weight=10) so one match does not dramatically change estimates. After 3 matches the observed data has much more influence.
 
 ---
 
@@ -129,45 +359,91 @@ After each matchday:
 
     world-cup-2026-predictor/
     ├── data/
-    │   ├── raw/                    ← source data + live results
-    │   ├── processed/              ← cleaned features + standings
-    │   └── predictions/            ← per-model + ensemble outputs
+    │   ├── raw/
+    │   │   ├── results.csv                 ← 44k international matches
+    │   │   ├── elo_ratings_wc2026.csv      ← historical ELO for 48 teams
+    │   │   ├── wc_2026_fixtures.csv        ← all 72 group stage fixtures
+    │   │   └── wc_2026_results.csv         ← live results tracker
+    │   ├── processed/
+    │   │   ├── results_clean.csv           ← normalized + features added
+    │   │   ├── train_features.csv          ← 15k matches with 24 features
+    │   │   ├── predict_features.csv        ← 72 WC fixtures with features
+    │   │   ├── elo_latest.csv              ← current ELO snapshot
+    │   │   └── standings_after_md*.csv     ← live group standings
+    │   └── predictions/
+    │       ├── elo_all.csv                 ← per-model predictions
+    │       ├── dixon_coles_all.csv
+    │       ├── xgboost_all.csv
+    │       ├── neural_net_all.csv
+    │       └── ensemble_md*.csv            ← final ensemble predictions
     ├── src/
-    │   ├── data/                   ← ingestion + normalization
-    │   ├── features/               ← feature engineering + standings
+    │   ├── data/
+    │   │   ├── fetch_elo.py                ← ELO data pipeline
+    │   │   ├── normalize_teams.py          ← team name standardization
+    │   │   └── process_data.py             ← cleaning + feature creation
+    │   ├── features/
+    │   │   ├── build_features.py           ← 24-feature engineering pipeline
+    │   │   └── group_standings.py          ← standings + stakes features
     │   ├── models/
-    │   │   ├── baseline/           ← ELO, Dixon-Coles, Hist. Avg, Dynamic ELO
-    │   │   └── ml/                 ← XGBoost, LightGBM, NN, Logistic, Stakes
-    │   ├── ensemble/               ← weighted ensemble
-    │   ├── evaluation/             ← backtesting
-    │   └── updater/                ← matchday pipeline + Bayesian updater
+    │   │   ├── baseline/
+    │   │   │   ├── elo_model.py
+    │   │   │   ├── dixon_coles.py
+    │   │   │   ├── historical_avg.py
+    │   │   │   └── dynamic_elo.py
+    │   │   └── ml/
+    │   │       ├── xgboost_model.py
+    │   │       ├── lightgbm_model.py
+    │   │       ├── neural_network.py
+    │   │       ├── logistic_regression.py
+    │   │       └── stakes_model.py
+    │   ├── ensemble/
+    │   │   └── ensemble.py
+    │   ├── evaluation/
+    │   │   └── backtest.py
+    │   └── updater/
+    │       ├── update_predictions.py
+    │       └── bayesian_updater.py
     ├── dashboard/
-    │   └── app.py                  ← Streamlit dashboard
+    │   └── app.py                          ← Streamlit 5-page dashboard
     ├── notebooks/
-    │   └── eda.ipynb               ← exploratory analysis
+    │   └── eda.ipynb                       ← exploratory analysis
+    ├── requirements.txt
     └── README.md
 
 ---
 
 ## 🚀 Getting Started
 
-### 1. Clone and install
+### 1. Clone and install dependencies
 
     git clone https://github.com/Bardiyashavandi/world-cup-2026-predictor.git
     cd world-cup-2026-predictor
     python3 -m pip install -r requirements.txt
 
+    Mac users (required for XGBoost):
+    brew install libomp
+
 ### 2. Download data
 
-Download from Kaggle and place CSVs in data/raw/:
+Download these datasets from Kaggle and place in data/raw/:
 
-- International football results (martj42/international-football-results)
-- WC 2026 Historical ELO ratings (afonsofernandescruz/2026-fifa-world-cup-historical-elo-ratings)
+    International football results:
+    kaggle.com/datasets/martj42/international-football-results-from-1872-to-2017
+    → results.csv, shootouts.csv, goalscorers.csv
 
-### 3. Run pipeline
+    WC 2026 Historical ELO ratings:
+    kaggle.com/datasets/afonsofernandescruz/2026-fifa-world-cup-historical-elo-ratings
+    → elo_ratings_wc2026.csv
 
+### 3. Run the full pipeline
+
+    # Process and clean data
     python3 src/data/process_data.py
+
+    # Engineer features
     python3 src/features/build_features.py
+
+    # Run all models
     python3 src/models/baseline/elo_model.py
     python3 src/models/baseline/dixon_coles.py
     python3 src/models/baseline/historical_avg.py
@@ -176,53 +452,68 @@ Download from Kaggle and place CSVs in data/raw/:
     python3 src/models/ml/lightgbm_model.py
     python3 src/models/ml/neural_network.py
     python3 src/models/ml/logistic_regression.py
+
+    # Generate ensemble predictions
     python3 src/ensemble/ensemble.py 1
+    python3 src/ensemble/ensemble.py 2
+    python3 src/ensemble/ensemble.py 3
+
+    # Launch dashboard
     streamlit run dashboard/app.py
+
+### 4. Run backtesting
+
+    python3 src/evaluation/backtest.py
 
 ---
 
 ## 📦 Requirements
 
-    pandas
-    numpy
-    scipy
-    scikit-learn
-    xgboost
-    lightgbm
-    torch
-    streamlit
-    plotly
-    matplotlib
-    seaborn
-    requests
+    pandas>=2.0
+    numpy>=1.24
+    scipy>=1.10
+    scikit-learn>=1.3
+    xgboost>=2.0
+    lightgbm>=4.0
+    torch>=2.0
+    streamlit>=1.28
+    plotly>=5.0
+    matplotlib>=3.7
+    seaborn>=0.12
+    requests>=2.28
     jupytext
+    nbformat
 
 ---
 
 ## 🧠 Key Design Decisions
 
 **Why Poisson for goals?**
-Goals are rare independent events — exactly what Poisson models. Validated empirically in the EDA notebook.
+Goals are rare, independent, discrete events — exactly the scenario Poisson distributions model. Empirically validated in the EDA notebook where actual goal distributions closely match Poisson theoretical distributions.
 
 **Why time-weighted training?**
-Germany 2014 is irrelevant to Germany 2026. Exponential decay weights recent matches up to 5.8x more than oldest.
+Germany's 2014 World Cup squad has no relevance to Germany's 2026 squad. Exponential decay (λ=0.001) weights recent matches up to 5.8× more than the oldest matches in our dataset, ensuring the model reflects current team quality.
 
-**Why TimeSeriesSplit for CV?**
-Standard k-fold would train on future data to predict the past — data leakage. TimeSeriesSplit always trains on past, validates on future.
+**Why TimeSeriesSplit for cross-validation?**
+Standard k-fold randomly splits data, which can train on 2022 matches to predict 2018 results — temporal data leakage that inflates performance estimates. TimeSeriesSplit always trains on the past and validates on the future, giving realistic performance estimates.
 
 **Why a specialist Stakes Model?**
-General models ignore group context. France with 6 points in MD3 rotates their squad. Panama needing a win plays completely differently. A specialist trained only on MD2/MD3 historical WC data captures this.
+All general models treat France vs Senegal in MD1 identically to France vs Croatia in MD3 when France is already qualified. Real football does not work this way. A specialist model trained exclusively on MD2 and MD3 historical WC matches with group context features captures squad rotation and elimination pressure effects.
 
 **Why ensemble over single model?**
-Each model captures something different — ELO captures strength, Dixon-Coles captures attack/defense, XGBoost captures non-linear feature interactions. The ensemble is more robust than any individual model.
+Each model has different failure modes. XGBoost fails on teams with few historical matches. Dixon-Coles is slow to react to recent form changes. ELO ignores attack/defense asymmetries. The ensemble is robust where any individual model is weak.
+
+**Why separate home and away goal models?**
+Home goals and away goals have different distributions and are influenced by different features. A team's attack determines home goals; the opponent's defense also matters but differently. Training separate models captures this asymmetry.
 
 ---
 
 ## 📜 References
 
-- Dixon, M. and Coles, S. (1997). Modelling Association Football Scores and Inefficiencies in the Football Betting Market
-- Elo, A. (1978). The Rating of Chessplayers, Past and Present
-- Chen, T. and Guestrin, C. (2016). XGBoost: A Scalable Tree Boosting System
+- Dixon, M. and Coles, S. (1997). Modelling Association Football Scores and Inefficiencies in the Football Betting Market. Applied Statistics, 46(2), 265-280.
+- Elo, A. (1978). The Rating of Chessplayers, Past and Present. Arco Publishing.
+- Chen, T. and Guestrin, C. (2016). XGBoost: A Scalable Tree Boosting System. KDD 2016.
+- Ke, G. et al. (2017). LightGBM: A Highly Efficient Gradient Boosting Decision Tree. NeurIPS 2017.
 
 ---
 
@@ -230,4 +521,10 @@ Each model captures something different — ELO captures strength, Dixon-Coles c
 
 **Bardiya Shavandi**
 
-Built as a portfolio project demonstrating end-to-end ML system design across statistics, machine learning, and MLOps.
+Built as a portfolio project demonstrating end-to-end ML system design across statistics, machine learning, and MLOps. The system was developed and deployed live during the 2026 FIFA World Cup group stage.
+
+---
+
+## 📄 License
+
+MIT License — free to use, modify and distribute with attribution.
