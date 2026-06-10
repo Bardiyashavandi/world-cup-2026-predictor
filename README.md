@@ -428,6 +428,34 @@ The prior is strong (weight=10) so one match does not dramatically change estima
 
 ---
 
+## ▶️ How to Run (Quick Reference)
+
+Run everything in one command:
+
+    ./run_all.sh
+
+Or run the important files one by one (in this order):
+
+| Step | Command | What it does |
+|------|---------|--------------|
+| 1. Clean data | `python3 src/data/process_data.py` | Cleans the raw data and normalizes team names |
+| 2. Build features | `python3 src/features/build_features.py` | Creates the 24 features used by the models |
+| 3. Run a model | `python3 src/models/ml/xgboost_model.py` | Runs one model (swap in any file from `src/models/`) |
+| 4. Combine models | `python3 src/ensemble/ensemble.py 1` | Builds the final ensemble for matchday 1 (use 2 or 3 for later rounds) |
+| 5. See the dashboard | `streamlit run dashboard/app.py` | Opens the interactive predictor in your browser |
+| 6. Check accuracy | `python3 src/evaluation/backtest.py` | Backtests every model on WC 2018 + 2022 |
+| 7. Run the tests | `pytest tests/` | Quick checks that everything is working |
+
+**After real results come in:** edit `data/raw/wc_2026_results.csv` (enter the scores, set `played=True`), then run:
+
+    python3 src/updater/update_predictions.py --matchday 1
+
+This refreshes the predictions for the next rounds.
+
+**Which prediction file to use:** `data/predictions/ensemble_md1.csv` (and `md2`, `md3`) — the ensemble is the best all-rounder.
+
+---
+
 ## 🚀 Getting Started
 
 ### 1. Clone and install dependencies
