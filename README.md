@@ -51,6 +51,34 @@ The system is **iterative** — after each matchday it ingests real results, upd
 
 ---
 
+## 📚 Datasets
+
+All data is public and sourced from Kaggle (international results and ELO ratings) plus the official 2026 World Cup draw. Raw files live in `data/raw/`; cleaned and feature-engineered versions are written to `data/processed/`.
+
+### Core datasets (used by the models)
+
+| File | Rows | What it is | How it's used |
+|------|------|------------|----------------|
+| `results.csv` | 49,445 | Every international men's match from 1872 to today (date, teams, score, tournament, venue, neutral flag). [Kaggle: martj42](https://kaggle.com/datasets/martj42/international-football-results-from-1872-to-2017) | The backbone. Cleaned to **19,713 matches from 2006 onward** (`results_clean.csv`), then turned into **15,857 training rows** with 24 features each. Drives form, head-to-head, Dynamic ELO and all ML models. |
+| `elo_ratings_wc2026.csv` | 4,683 | Yearly historical ELO-rating snapshots for national teams. [Kaggle: afonsofernandescruz](https://kaggle.com/datasets/afonsofernandescruz/2026-fifa-world-cup-historical-elo-ratings) | Cleaned to a current snapshot of the **48 qualified teams** (`elo_clean.csv`) — the team-strength signal for the ELO model and the `elo_diff` feature. |
+| `wc_2026_fixtures.csv` | 72 | All 72 group-stage fixtures from the official draw (Dec 2025): match, group, teams, date, city, matchday. | The matches we actually predict. |
+| `wc_2026_results.csv` | 72 | Live results tracker — same 72 fixtures with empty `home_goals`/`away_goals`/`played` columns. | You fill this in as the tournament unfolds; the updater re-runs predictions from it. |
+
+### Supplementary datasets (used in EDA / reserved for future features)
+
+| File | Rows | What it is |
+|------|------|------------|
+| `goalscorers.csv` | 47,601 | Goal-by-goal scorer and minute data for historical matches. |
+| `shootouts.csv` | 677 | Outcomes of penalty shootouts in historical matches. |
+| `wc_2018_team_stats.csv` | 53 | Team-level stats from the 2018 World Cup. |
+| `wc_2022_match_stats.csv` | 127 | Match-level stats (including real shot data) from the 2022 World Cup — a candidate source for richer xG features (see Future Work). |
+
+### How the data flows
+
+The raw 49k-match history is filtered to **2006 onward** (modern era, more relevant squads) and normalized so team names match across sources (e.g. "Korea Republic" → "South Korea"). Feature engineering then computes 24 features per match using only information available *before* each match's date — no future-data leakage. Time-decay weighting makes recent matches count up to ~5.8× more than the oldest, so the models reflect current team quality.
+
+---
+
 ## 📊 Model Details
 
 ### Why 9 Models?
